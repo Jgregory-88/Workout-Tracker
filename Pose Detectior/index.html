@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Pose + TFJS Classification Demo</title>
+  <!-- TensorFlow.js & Pose Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+  <!-- The main TFJS library for loading your classification model -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f4f4f4;
+    }
+    h1, h2 {
+      margin-top: 0;
+    }
+    .section-box {
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      margin-bottom: 20px;
+    }
+    button {
+      margin: 5px 0;
+      cursor: pointer;
+    }
+    .overlay-container {
+      position: relative;
+      display: inline-block;
+      border: 2px solid #333;
+    }
+    video, canvas {
+      display: block;
+      max-width: 100%;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; 
+      left: 0;
+      pointer-events: none; 
+    }
+    #scrub-range {
+      width: 400px;
+    }
+    #debug-text {
+      font-size: 0.9em;
+      color: #444;
+    }
+    #pose-display {
+      font-weight: bold;
+      color: blue;
+      font-size: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Pose + TFJS Classification Demo</h1>
+
+<!-- MODEL LOADING STATUS -->
+<div id="model-status">Loading pose classification model...</div>
+<!-- We will display current predicted pose here -->
+<h2>Predicted Pose: <span id="pose-display">—</span></h2>
+
+<!-- =========================================================
+     SECTION A: Video Upload
+========================================================= -->
+<div class="section-box">
+  <h2>Option A: Upload a Video</h2>
+  <input type="file" id="video-file" accept="video/*">
+  <button id="load-video-btn">Load & Analyze</button>
+  <p id="upload-status"></p>
+</div>
+
+<!-- =========================================================
+     SECTION B: Webcam
+========================================================= -->
+<div class="section-box">
+  <h2>Option B: Record from Webcam</h2>
+  <button id="start-webcam-btn">Start Webcam</button>
+  <button id="stop-webcam-btn" disabled>Stop Recording</button>
+  <span id="webcam-status"></span>
+</div>
+
+<!-- =========================================================
+     SECTION C: Media Display + Canvas
+========================================================= -->
+<div class="section-box" style="display:none;" id="display-section">
+  <div class="overlay-container" id="media-container">
+    <video id="display-video" playsinline controls></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <!-- Playback -->
+  <div style="margin-top: 10px;">
+    <input type="range" id="scrub-range" min="0" max="1" step="0.01" value="0">
+    <button id="prev-frame-btn">Prev Frame</button>
+    <button id="next-frame-btn">Next Frame</button>
+  </div>
+
+  <!-- Frame Label -->
+  <div style="margin-top:10px;">
+    <input type="text" id="frame-label" placeholder="Enter label (e.g. jumping_jack)">
+    <button id="apply-label-btn">Apply Label to Current Frame</button>
+  </div>
+
+  <button id="download-data-btn" style="margin-top:10px;">Download Labeled JSON (Pose Only)</button>
+  <p id="debug-text"></p>
+</div>
+
+<script>
+// ---------------------
+// GLOBALS
+// ---------------------
+let detector = null;
+let displayVideo = null;
+let overlayCanvas = null;
+let overlayCtx = null;
+
+let framesData = [];
+let currentFrameIndex = -1;
+let isRecording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let rafId = null;
+
+// Our TFJS classification model + state array:
+let classifierModel = null;
+let uniqueStates = [];  // to map the numeric outputs back to label strings
+let predictedPose = ""; // will store the predicted pose label
+
+// Load MoveNet
+window.addEventListener('DOMContentLoaded', async () => {
+  displayVideo = document.getElementById('display-video');
+  overlayCanvas = document.getElementById('overlay');
+  overlayCtx = overlayCanvas.getContext('2d');
+
+  // 1) Load MoveNet for keypoint detection
+  try {
+    detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet);
+    console.log("MoveNet loaded successfully!");
+  } catch (err) {
+    console.error("Error creating Pose Detector:", err);
+    alert("Failed to load MoveNet. Check console for details.");
+  }
+
+  // 2) Load our classification model (converted to TFJS)
+  // Make sure "pose_classifier_tfjs/model.json" is accessible
+  const modelStatus = document.getElementById("model-status");
+  try {
+    classifierModel = await tf.loadLayersModel("pose_classifier_tfjs/model.json");
+    console.log("Classifier model loaded!");
+    modelStatus.textContent = "Model loaded! Ready.";
+    // If you saved 'unique_states' in a JSON file, you could fetch it. 
+    // For example, let's embed them in code or fetch from a states.json. 
+    // For now, we guess or define them in code:
+    uniqueStates = ["pushup_down", "pushup_transition", "pushup_up"]; 
+    // Adjust to match your actual classes
+
+  } catch (err) {
+    console.error("Error loading classification model:", err);
+    modelStatus.textContent = "Failed to load model. Check console.";
+  }
+
+  // 3) Hook up events
+  document.getElementById('load-video-btn').addEventListener('click', handleVideoUpload);
+  document.getElementById('start-webcam-btn').addEventListener('click', startWebcamRecording);
+  document.getElementById('stop-webcam-btn').addEventListener('click', stopWebcamRecording);
+  document.getElementById('scrub-range').addEventListener('input', handleScrubRange);
+  document.getElementById('prev-frame-btn').addEventListener('click', () => stepFrame(-1));
+  document.getElementById('next-frame-btn').addEventListener('click', () => stepFrame(1));
+  document.getElementById('apply-label-btn').addEventListener('click', labelCurrentFrame);
+  document.getElementById('download-data-btn').addEventListener('click', downloadPoseData);
+
+  displayVideo.onloadedmetadata = () => {
+    const vw = displayVideo.videoWidth;
+    const vh = displayVideo.videoHeight;
+    overlayCanvas.width = vw;
+    overlayCanvas.height = vh;
+  };
+
+  displayVideo.addEventListener('timeupdate', () => {
+    if (displayVideo.paused) {
+      const tMs = displayVideo.currentTime * 1000;
+      let nearest = findNearestFrameIndex(tMs);
+      if (nearest !== currentFrameIndex) {
+        currentFrameIndex = nearest;
+        redrawStoredFrame(currentFrameIndex);
+      }
+      updateDebug();
+    }
+    document.getElementById('scrub-range').value = displayVideo.currentTime;
+  });
+});
+
+// --------------
+// VIDEO UPLOAD
+// --------------
+function handleVideoUpload() {
+  const fileInput = document.getElementById('video-file');
+  if (!fileInput.files || fileInput.files.length === 0) {
+    alert("No video file selected!");
+    return;
+  }
+  const file = fileInput.files[0];
+  const fileURL = URL.createObjectURL(file);
+
+  framesData = [];
+  currentFrameIndex = -1;
+  recordedChunks = [];
+
+  displayVideo.src = fileURL;
+  displayVideo.load();
+
+  document.getElementById('display-section').style.display = 'block';
+  document.getElementById('upload-status').textContent = "Video loaded. Press play or scrub timeline.";
+
+  startDetectionLoop();
+}
+
+// --------------
+// WEBCAM
+// --------------
+async function startWebcamRecording() {
+  if (!detector) {
+    alert("Pose Detector not ready!");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    displayVideo.srcObject = stream;
+    displayVideo.play();
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp8' });
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+      const recordedBlob = new Blob(recordedChunks, { type: 'video/webm' });
+      const recordedURL = URL.createObjectURL(recordedBlob);
+      displayVideo.srcObject = null;
+      displayVideo.src = recordedURL;
+      displayVideo.load();
+    };
+
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('start-webcam-btn').disabled = true;
+    document.getElementById('stop-webcam-btn').disabled = false;
+    document.getElementById('webcam-status').textContent = "Recording...";
+
+    framesData = [];
+    currentFrameIndex = -1;
+    document.getElementById('display-section').style.display = 'block';
+
+    startDetectionLoop();
+  } catch (err) {
+    console.error("Webcam error:", err);
+    alert("Error starting webcam. Check permissions.");
+  }
+}
+
+function stopWebcamRecording() {
+  isRecording = false;
+  document.getElementById('start-webcam-btn').disabled = false;
+  document.getElementById('stop-webcam-btn').disabled = true;
+  document.getElementById('webcam-status').textContent = "Recording stopped.";
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+// --------------
+// DETECTION LOOP
+// --------------
+function startDetectionLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+
+  const detect = async () => {
+    if (!detector) return;
+
+    if (!displayVideo.paused && !displayVideo.ended) {
+      const vw = displayVideo.videoWidth;
+      const vh = displayVideo.videoHeight;
+      if (vw && vh) {
+        // offscreen
+        const offscreen = document.createElement('canvas');
+        offscreen.width = vw;
+        offscreen.height = vh;
+        const offCtx = offscreen.getContext('2d');
+        offCtx.drawImage(displayVideo, 0, 0, vw, vh);
+
+        const rawCanvas = document.getElementById("raw-canvas");
+        const rawCtx = rawCanvas.getContext("2d");
+        rawCtx.clearRect(0, 0, rawCanvas.width, rawCanvas.height);
+        rawCanvas.width = vw;
+        rawCanvas.height = vh;
+        rawCtx.drawImage(displayVideo, 0, 0, vw, vh);
+
+        try {
+          const poses = await detector.estimatePoses(offscreen);
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+          if (poses && poses.length > 0) {
+            const kpArr = poses[0].keypoints;
+            drawKeypointsScaled(kpArr, overlayCtx, vw, vh);
+
+            // store
+            const tMs = displayVideo.currentTime * 1000;
+            const structuredKP = kpArr.map(k => ({
+              x: k.x, y: k.y, score: k.score
+            }));
+            const angles = computeCommonAngles(kpArr);
+
+            framesData.push({
+              timestampMs: tMs,
+              keypoints: structuredKP,
+              angles
+            });
+            currentFrameIndex = framesData.length - 1;
+
+            // CLASSIFY this pose => update 'predictedPose'
+            classifyPose(structuredKP, angles, vw, vh);
+          }
+        } catch (err) {
+          console.error("Pose estimation error:", err);
+        }
+      }
+    }
+    updateDebug();
+    rafId = requestAnimationFrame(detect);
+  };
+  detect();
+}
+
+// --------------
+// CLASSIFICATION
+// --------------
+async function classifyPose(keypoints, angles, vw, vh) {
+  if (!classifierModel) return;
+
+  // Flatten [x0, y0, score0, x1, y1, score1, ...]
+  // plus angles [leftElbow, rightElbow, leftKnee, rightKnee]
+  const feats = [];
+  for (let kp of keypoints) {
+    // Optionally use normalized coords or absolute
+    // We'll use absolute for example, or you can do kp.x / vw, etc.
+    feats.push(kp.x);
+    feats.push(kp.y);
+    feats.push(kp.score);
+  }
+  feats.push(angles.leftElbow || 0);
+  feats.push(angles.rightElbow || 0);
+  feats.push(angles.leftKnee || 0);
+  feats.push(angles.rightKnee || 0);
+
+  // Convert to tf tensor
+  const input = tf.tensor2d([feats]);
+  // Predict
+  const pred = classifierModel.predict(input);
+  const predData = await pred.data();  // wait for GPU
+  input.dispose();
+  pred.dispose();
+
+  // Argmax
+  let maxVal = -999;
+  let maxIdx = -1;
+  for (let i=0; i<predData.length; i++) {
+    if (predData[i] > maxVal) {
+      maxVal = predData[i];
+      maxIdx = i;
+    }
+  }
+  // Map index => label
+  if (uniqueStates[maxIdx]) {
+    predictedPose = uniqueStates[maxIdx];
+  } else {
+    predictedPose = "unknown";
+  }
+
+  // Update on page
+  document.getElementById("pose-display").textContent = predictedPose;
+}
+
+// --------------
+// DRAW KEYPOINTS
+// --------------
+function drawKeypointsScaled(kpArray, ctx, vw, vh) {
+  const ratioX = overlayCanvas.width / vw;
+  const ratioY = overlayCanvas.height / vh;
+
+  ctx.fillStyle = "red";
+  kpArray.forEach(kp => {
+    if (kp.score > 0.3) {
+      const dx = kp.x * ratioX;
+      const dy = kp.y * ratioY;
+      ctx.beginPath();
+      ctx.arc(dx, dy, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  });
+}
+
+// --------------
+// STEP FRAME
+// --------------
+function stepFrame(direction) {
+  let newIndex = currentFrameIndex + direction;
+  if (newIndex < 0 || newIndex >= framesData.length) return;
+  currentFrameIndex = newIndex;
+
+  let newTimeSec = framesData[newIndex].timestampMs / 1000;
+  displayVideo.currentTime = newTimeSec;
+
+  redrawStoredFrame(newIndex);
+  updateDebug();
+}
+
+function redrawStoredFrame(frameIndex) {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  if (frameIndex < 0 || frameIndex >= framesData.length) return;
+  const f = framesData[frameIndex];
+  const kpArr = f.keypoints.map(k => ({ x: k.x, y: k.y, score: k.score }));
+  drawKeypointsScaled(kpArr, overlayCtx, overlayCanvas.width, overlayCanvas.height);
+}
+
+// --------------
+// SCRUB + UTILS
+// --------------
+function findNearestFrameIndex(targetMs) {
+  if (framesData.length === 0) return -1;
+  let closestIndex = 0;
+  let minDiff = Math.abs(framesData[0].timestampMs - targetMs);
+  for (let i = 1; i < framesData.length; i++) {
+    let diff = Math.abs(framesData[i].timestampMs - targetMs);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestIndex = i;
+    }
+  }
+  return closestIndex;
+}
+
+function handleScrubRange() {
+  const val = parseFloat(document.getElementById('scrub-range').value) || 0;
+  displayVideo.currentTime = val;
+}
+
+// --------------
+// LABELING
+// --------------
+function labelCurrentFrame() {
+  if (currentFrameIndex < 0 || currentFrameIndex >= framesData.length) {
+    alert("No frame selected!");
+    return;
+  }
+  const labelVal = document.getElementById('frame-label').value.trim();
+  if (!labelVal) {
+    alert("Enter a label first.");
+    return;
+  }
+  framesData[currentFrameIndex].label = labelVal;
+  updateDebug();
+}
+
+// --------------
+// DOWNLOAD
+// --------------
+function downloadPoseData() {
+  if (framesData.length === 0) {
+    alert("No frames captured yet!");
+    return;
+  }
+  const vw = displayVideo.videoWidth || 1;
+  const vh = displayVideo.videoHeight || 1;
+
+  const normalizedFrames = framesData.map(f => {
+    const normKp = f.keypoints.map(k => ({
+      x: k.x / vw, y: k.y / vh, score: k.score
+    }));
+    return {
+      timestampMs: f.timestampMs,
+      keypoints: normKp,
+      angles: f.angles,
+      label: f.label
+    };
+  });
+
+  const blob = new Blob([JSON.stringify(normalizedFrames, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "poseData_normalized.json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  URL.revokeObjectURL(url);
+}
+
+// --------------
+// ANGLES
+// --------------
+function computeCommonAngles(kpArray) {
+  const leftElbow  = angleFrom3Points(kpArray[5], kpArray[7], kpArray[9]);
+  const rightElbow = angleFrom3Points(kpArray[6], kpArray[8], kpArray[10]);
+  const leftKnee   = angleFrom3Points(kpArray[11], kpArray[13], kpArray[15]);
+  const rightKnee  = angleFrom3Points(kpArray[12], kpArray[14], kpArray[16]);
+  return { leftElbow, rightElbow, leftKnee, rightKnee };
+}
+
+function angleFrom3Points(A, B, C) {
+  if (!A || !B || !C) return 0;
+  const BAx = A.x - B.x;
+  const BAy = A.y - B.y;
+  const BCx = C.x - B.x;
+  const BCy = C.y - B.y;
+  const dot = BAx * BCx + BAy * BCy;
+  const magBA = Math.sqrt(BAx*BAx + BAy*BAy);
+  const magBC = Math.sqrt(BCx*BCx + BCy*BCy);
+  if (magBA === 0 || magBC === 0) return 0;
+  const cosAngle = dot / (magBA * magBC);
+  const angleRad = Math.acos(Math.min(Math.max(cosAngle, -1), 1));
+  return angleRad * (180 / Math.PI);
+}
+
+// --------------
+// DEBUG
+// --------------
+function updateDebug() {
+  let dbg = document.getElementById('debug-text');
+  if (currentFrameIndex < 0 || currentFrameIndex >= framesData.length) {
+    dbg.textContent = `Frames: ${framesData.length}, no current frame.`;
+  } else {
+    const f = framesData[currentFrameIndex];
+    dbg.textContent = `Frame ${currentFrameIndex+1}/${framesData.length}, Time=${f.timestampMs.toFixed(0)}ms, Label=${f.label || '—'}`;
+  }
+}
+</script>
+
+<!-- Hidden raw canvas -->
+<canvas id="raw-canvas" width="640" height="480" style="display: none;"></canvas>
+
+<!-- Frame-Level State Tagging, Snapshot, etc. remains the same -->
+<!-- ... your existing code for state tagging, etc. -->
+
+</body>
+</html>
