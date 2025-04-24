@@ -1,0 +1,532 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Pose Classification & Rep Counter (V19 - Axis Anchors + Debug)</title> {/* Updated Title */}
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<style>
+    /* Basic styling for the page */
+    body {
+        font-family: 'Arial', sans-serif;
+        margin: 20px;
+        background-color: #f4f4f4;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        color: #333;
+    }
+    /* Heading styles */
+    h1, h2 {
+        margin-top: 0;
+        text-align: center;
+        color: #1a1a1a;
+    }
+    /* Container boxes for sections */
+    .section-box {
+        background: #ffffff;
+        padding: 25px;
+        border-radius: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        margin-bottom: 25px;
+        width: 90%;
+        max-width: 700px;
+        box-sizing: border-box;
+    }
+    /* Button styling */
+    button {
+        margin: 5px 10px;
+        padding: 10px 18px;
+        cursor: pointer;
+        border-radius: 6px;
+        border: none;
+        background-color: #007bff;
+        color: white;
+        font-size: 0.95em;
+        transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    button:hover {
+        background-color: #0056b3;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    button:disabled {
+        background-color: #cccccc;
+        color: #666666;
+        cursor: not-allowed;
+        opacity: 0.7;
+        box-shadow: none;
+    }
+    /* Container for video and overlay canvas */
+    .overlay-container {
+        position: relative;
+        display: block;
+        width: 100%;
+        max-width: 640px;
+        margin: 0 auto;
+        border: 1px solid #ddd;
+        box-sizing: border-box;
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: #eee;
+    }
+    /* Video element styling */
+    video {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 8px;
+    }
+    /* Overlay canvas styling */
+    #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+        width: 100%;
+        height: 100%;
+    }
+    /* Text elements for status/debug */
+    #debug-text, #status-text, #input-status {
+        font-size: 0.9em;
+        color: #555;
+        margin-top: 10px;
+        text-align: center;
+    }
+    #input-status {
+        font-style: italic;
+    }
+    /* Button container styling */
+    .button-container {
+        text-align: center;
+        margin-top: 15px;
+    }
+    /* Status text styling */
+    #orientation-status, #confidence-status, #model-pose-status, #final-pose-status, .rep-count-item, #head-stability-status, #hand-stability-status, #feet-stability-status {
+        font-size: 0.95em;
+        color: #444;
+        margin-top: 8px;
+    }
+    /* Bold span within rep count item */
+    .rep-count-item span.count {
+        font-weight: bold;
+        font-size: 1.15em;
+        color: #0056b3;
+        margin-left: 8px;
+    }
+    /* Styling for the Up/Down phase indicator */
+    .pose-phase {
+        margin-left: 8px;
+        font-style: italic;
+        color: #e85d04;
+        min-width: 120px;
+        display: inline-block;
+        font-weight: 500;
+    }
+    /* File input styling */
+    input[type="file"] {
+        margin: 15px 0;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    /* Styling for equipment toggles */
+    .toggle-container label {
+        margin: 0 15px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 0.9em;
+    }
+    .toggle-container input[type="checkbox"] {
+        margin-right: 5px;
+        cursor: pointer;
+        vertical-align: middle;
+    }
+    /* Container for horizontal rep counters */
+    .rep-counter-container {
+        display: flex;
+        justify-content: space-around;
+        flex-wrap: wrap;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #eee;
+        text-align: center;
+    }
+    /* Individual rep counter item styling */
+    .rep-count-item {
+        margin: 5px 10px;
+        flex-basis: auto;
+    }
+    /* Settings section styling */
+    .settings-grid {
+        display: grid;
+        grid-template-columns: auto 1fr auto; /* Label, Slider, Value */
+        gap: 10px 15px;
+        align-items: center;
+        margin-top: 15px;
+    }
+    .settings-grid label {
+        justify-self: end;
+        font-size: 0.9em;
+    }
+    .settings-grid input[type="range"] {
+        width: 100%;
+        cursor: pointer;
+    }
+    .settings-grid span {
+        justify-self: start;
+        font-size: 0.9em;
+        font-weight: bold;
+        min-width: 40px; /* Ensure space for values */
+    }
+    /* Add a subtle divider */
+    hr {
+      border: none;
+      height: 1px;
+      background-color: #eee;
+      margin: 15px 0;
+    }
+</style>
+</head>
+<body>
+
+<h1>Pose Classification & Rep Counter (V19 - Axis Anchors + Debug)</h1> <!-- Updated Title -->
+
+<div class="section-box">
+    <h2>Input Control</h2>
+    <div class="button-container">
+        <button id="start-webcam-btn" disabled>Start Webcam</button>
+        <button id="stop-input-btn" disabled>Stop Input</button>
+        <button id="reset-state-btn">Reset Exercise States</button>
+    </div>
+    <div style="text-align: center; margin-top: 15px;">
+        <label for="video-upload">Upload Video:</label>
+        <input type="file" id="video-upload" accept="video/*">
+    </div>
+    <p id="input-status" style="text-align: center; margin-top: 10px;">Initializing...</p>
+</div>
+
+<div class="section-box">
+    <h2>Settings</h2>
+    <div class="settings-grid">
+        <label for="confidence-slider">Confidence Threshold (%):</label>
+        <input type="range" id="confidence-slider" min="0" max="100" value="45">
+        <span id="confidence-value">45%</span>
+
+        <label for="stability-y-slider">Stability Threshold Y (px):</label>
+        <input type="range" id="stability-y-slider" min="1" max="200" value="10">
+        <span id="stability-y-value">10</span>
+
+        <label for="stability-x-slider">Stability Threshold X (px):</label>
+        <input type="range" id="stability-x-slider" min="1" max="200" value="10">
+        <span id="stability-x-value">10</span>
+
+        <label for="interval-slider">Processing Interval (ms):</label>
+        <input type="range" id="interval-slider" min="33" max="500" value="100" step="1">
+        <span id="interval-value">100ms (~10 FPS)</span>
+
+        <label for="pending-window-slider">Sequence Window (frames):</label>
+        <input type="range" id="pending-window-slider" min="1" max="100" value="15">
+        <span id="pending-window-value">15</span>
+
+        <label for="cooldown-slider">Rep Cooldown (frames):</label>
+        <input type="range" id="cooldown-slider" min="0" max="20" value="5">
+        <span id="cooldown-value">5</span>
+    </div>
+     <p style="font-size: 0.8em; text-align: center; margin-top: 10px; color: #777;">Note: Stability uses axis-specific anchors (Squat=X, Curl=Y, Pushup=XY) once 'Set'.</p>
+</div>
+
+<div class="section-box">
+    <h2>Equipment Detected (Manual Toggle - Not Used in Logic)</h2>
+    <div class="toggle-container" style="text-align: center; padding-top: 10px;">
+        <label for="pullup-bar-toggle"><input type="checkbox" id="pullup-bar-toggle"> Pullup Bar</label>
+        <label for="barbell-toggle"><input type="checkbox" id="barbell-toggle"> Barbell</label>
+        <label for="dumbbells-toggle"><input type="checkbox" id="dumbbells-toggle"> Dumbbells</label>
+    </div>
+</div>
+
+<div class="section-box">
+    <h2>Pose State Estimation</h2>
+    <p id="model-pose-status">Model Estimate: <strong id="pose-estimate">-</strong></p>
+    <p id="confidence-status">Confidence: <strong id="pose-confidence">-</strong></p>
+    <p id="orientation-status">Orientation: <strong id="orientation-value">-</strong></p>
+    <p id="head-stability-status">Head Stability: <strong id="head-stability-value">-</strong></p>
+    <p id="hand-stability-status">Hand Stability: <strong id="hand-stability-value">-</strong></p>
+    <p id="feet-stability-status">Feet Stability: <strong id="feet-stability-value">-</strong></p>
+    <hr>
+    <p id="final-pose-status" style="font-weight: bold;">Final Pose State: <strong id="final-pose">-</strong></p>
+    <div class="rep-counter-container">
+        <div class="rep-count-item">Pushups: <span class="count" id="pushup-reps">0</span> <span id="pushup-phase" class="pose-phase">(Not Set)</span></div>
+        <div class="rep-count-item">Pullups: <span class="count" id="pullup-reps">0</span> <span id="pullup-phase" class="pose-phase">(Not Set)</span></div>
+        <div class="rep-count-item">Squats: <span class="count" id="squat-reps">0</span> <span id="squat-phase" class="pose-phase">(Not Set)</span></div>
+        <div class="rep-count-item">Curls: <span class="count" id="curl-reps">0</span> <span id="curl-phase" class="pose-phase">(Not Set)</span></div>
+    </div>
+    <div class="button-container" style="margin-top: 15px;">
+        <button id="download-log-btn" disabled>Download Log</button>
+    </div>
+</div>
+
+<div class="section-box" style="display:none;" id="display-section">
+    <h2>Live Feed / Video</h2>
+    <div class="overlay-container" id="media-container">
+        <video id="display-video" playsinline controls muted></video>
+        <canvas id="overlay"></canvas>
+    </div>
+    <p id="debug-text"></p>
+</div>
+
+<script>
+// --- Global Variables ---
+let poseModel, labelMap, scalerParams, detector = null;
+let displayVideo, overlayCanvas, overlayCtx, videoUploadInput, startWebcamBtn, stopInputBtn, downloadLogBtn, inputStatusElement, displaySection, resetStateBtn = null;
+let activeInputStream = null;
+let isInputRunning = false;
+let isProcessingVideoFile = false;
+let rafId = null;
+let videoProcessingHandle = null;
+let poseSequenceLog = [];
+let poseHistory = [];
+let keypointHistory = [];
+let lastDetectedKeypoints = null;
+
+// Equipment toggles state
+let isPullupBarDetected = false;
+let isBarbellDetected = false;
+let isDumbbellsDetected = false;
+
+// --- Settings Variables (Configurable via UI) ---
+let CONFIDENCE_THRESHOLD_PERCENT = 45;
+let FRAME_PROCESSING_INTERVAL_MS = 100;
+let PENDING_STATE_FRAME_WINDOW = 15;
+let STABILITY_THRESHOLD_Y = 10;
+let STABILITY_THRESHOLD_X = 10;
+let REP_COOLDOWN_FRAMES = 5;
+
+// --- Fixed Constants ---
+const POSE_HISTORY_LENGTH = 10;
+const KEYPOINT_HISTORY_LENGTH = 5;
+const HAND_NOSE_THRESHOLD_Y = 5;
+const POSE_CONFIRMATION_FRAMES = 2;
+
+// --- Rep Counting State Machine Globals ---
+const EXERCISE_STATES = {
+    'curls': { state: 'Not Set', status: null, sequence: [], frameCount: 0, reps: 0, cooldown: 0, lastRepFrame: null, lastActivityFrame: null, lastPotentialPose: null, consecutivePoseCount: 0, anchorHead: null, anchorHands: null },
+    'pushups': { state: 'Not Set', status: null, sequence: [], frameCount: 0, reps: 0, cooldown: 0, lastRepFrame: null, lastActivityFrame: null, lastPotentialPose: null, consecutivePoseCount: 0, anchorHead: null, anchorHands: null },
+    'pullups': { state: 'Not Set', status: null, sequence: [], frameCount: 0, reps: 0, cooldown: 0, lastRepFrame: null, lastActivityFrame: null, lastPotentialPose: null, consecutivePoseCount: 0, anchorHead: null, anchorHands: null },
+    'squats': { state: 'Not Set', status: null, sequence: [], frameCount: 0, reps: 0, cooldown: 0, lastRepFrame: null, lastActivityFrame: null, lastPotentialPose: null, consecutivePoseCount: 0, anchorHead: null, anchorHands: null }
+};
+let frameCounter = 0;
+
+// --- Debugging Flag ---
+const ENABLE_DIAGNOSTIC_LOGGING = true; // <-- Logging is enabled
+
+// --- Function to Load All Necessary Resources (Unchanged) ---
+async function loadAppResources() {
+    console.log("Loading application resources...");
+    const modelStatusElement = document.getElementById("pose-estimate");
+    inputStatusElement = document.getElementById("input-status");
+    startWebcamBtn = document.getElementById("start-webcam-btn");
+    if(!modelStatusElement || !inputStatusElement || !startWebcamBtn){ console.error("Essential UI elements missing!"); return; }
+    modelStatusElement.innerText = "Loading MoveNet..."; inputStatusElement.textContent = "Initializing...";
+    try {
+        detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet); console.log("MoveNet loaded.");
+        modelStatusElement.innerText = "Loading Pose Model..."; poseModel = await tf.loadGraphModel("pose_classifier_tfjs/model.json"); console.log("Pose Model loaded.");
+        modelStatusElement.innerText = "Loading Label Map..."; const res = await fetch("state_labels.json"); if (!res.ok) throw new Error(`Fetch failed: ${res.statusText}`); labelMap = await res.json(); console.log("Label map loaded.");
+        modelStatusElement.innerText = "Loading Scaler Params..."; const scalerRes = await fetch("scaler_params.json"); if (!scalerRes.ok) throw new Error(`Fetch failed: ${scalerRes.statusText}`); scalerParams = await scalerRes.json(); console.log("Scaler params loaded.");
+        if (!scalerParams?.mean?.length || scalerParams.mean.length !== scalerParams.scale?.length) throw new Error("Invalid scaler_params.json"); console.log(`Scaler expects ${scalerParams.mean.length} features.`);
+        modelStatusElement.innerText = "-"; inputStatusElement.textContent = "Ready. Select input."; startWebcamBtn.disabled = false; console.log("All resources loaded.");
+    } catch (err) {
+        console.error("Error loading resources:", err); if(modelStatusElement) modelStatusElement.innerText = `Error`; if(inputStatusElement) inputStatusElement.textContent = `Init Error: ${err.message}. Check console/files.`;
+        poseModel = null; labelMap = null; scalerParams = null; detector = null; if(startWebcamBtn) startWebcamBtn.disabled = true;
+    }
+}
+
+// --- Feature Extraction (Unchanged) ---
+function extractFeaturesFromFrame(frameData, orientationString) {
+    if (!scalerParams?.mean?.length) { console.error("Scaler params not ready."); return { tensor: null, scaledInputArray: null }; }
+    const expectedFeatureLength = scalerParams.mean.length; let rawInput = []; const keypoints = frameData.keypoints || [];
+    for (let i = 0; i < 17; i++) { const k = keypoints[i]; if (k) rawInput.push(k.x||0, k.y||0, k.score||0); else rawInput.push(0,0,0); } const angles = frameData.angles || {};
+    rawInput.push(angles.leftElbow||0, angles.rightElbow||0, angles.leftKnee||0, angles.rightKnee||0); let orientation_num = -1.0; if (orientationString === 'Horizontal') orientation_num = 1.0; else if (orientationString === 'Vertical') orientation_num = 0.0; rawInput.push(orientation_num);
+    if (rawInput.length !== expectedFeatureLength) { console.error(`Feature length mismatch: ${rawInput.length} vs ${expectedFeatureLength}.`); return { tensor: null, scaledInputArray: null }; }
+    let scaledInputArray = rawInput.map((v, i) => { const m = scalerParams.mean[i], s = scalerParams.scale[i]; if (s == null || !isFinite(s) || s === 0) return 0; return (v - m) / s; }); return { tensor: tf.tensor([scaledInputArray]), scaledInputArray: scaledInputArray };
+}
+
+// --- Orientation Calculation (Unchanged) ---
+function getPoseOrientation(keypoints) {
+    const confThreshold = 0.3; if (!keypoints || keypoints.length < 13) return "Unknown"; const lS = keypoints[5], rS = keypoints[6], lH = keypoints[11], rH = keypoints[12]; if (!lS||lS.score<confThreshold || !rS||rS.score<confThreshold || !lH||lH.score<confThreshold || !rH||rH.score<confThreshold) return "Unknown"; const avgSY=(lS.y+rS.y)/2, avgHY=(lH.y+rH.y)/2; const hDist=Math.abs(lS.x-rS.x), vDist=Math.abs(avgSY-avgHY); if(hDist<1e-6 && vDist<1e-6) return "Unknown"; const ratio=1.2; if(vDist > hDist*ratio) return "Vertical"; if(hDist > vDist*ratio) return "Horizontal"; return "Intermediate/Unknown";
+}
+
+// --- Angle Calculation (Unchanged) ---
+function computeCommonAngles(kpArray) { const getP = (i) => (kpArray && kpArray[i]) || {x:0,y:0,score:0}; const p=(i)=>({x:getP(i).x,y:getP(i).y}); const lS=p(5), rS=p(6), lE=p(7), rE=p(8), lW=p(9), rW=p(10), lH=p(11), rH=p(12), lK=p(13), rK=p(14), lA=p(15), rA=p(16); return { leftElbow:angleFrom3Points(lS,lE,lW), rightElbow:angleFrom3Points(rS,rE,rW), leftKnee:angleFrom3Points(lH,lK,lA), rightKnee:angleFrom3Points(rH,rK,rA) }; }
+function angleFrom3Points(A,B,C) { if (!A||!B||!C||typeof A.x!=='number'||typeof B.x!=='number'||typeof C.x!=='number') return 0; const BAx=A.x-B.x, BAy=A.y-B.y, BCx=C.x-B.x, BCy=C.y-B.y; const dot=BAx*BCx+BAy*BCy, magBA=Math.sqrt(BAx*BAx+BAy*BAy), magBC=Math.sqrt(BCx*BCx+BCy*BCy); if(magBA===0||magBC===0) return 0; let cos=Math.max(-1,Math.min(1,dot/(magBA*magBC))); return Math.acos(cos)*(180/Math.PI); }
+
+// --- Stability Calculation (Based on History - Used for UI display) ---
+function calculateStability(indices) { if (keypointHistory.length < KEYPOINT_HISTORY_LENGTH) return { stableX: true, stableY: true, deltaX: 0, deltaY: 0 }; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity, pts=0; for(let i=keypointHistory.length-KEYPOINT_HISTORY_LENGTH; i<keypointHistory.length; i++){ const kps=keypointHistory[i]; if(!kps) continue; indices.forEach(idx=>{ const kp=kps[idx]; if(kp?.score>0.1){ minX=Math.min(minX,kp.x);maxX=Math.max(maxX,kp.x);minY=Math.min(minY,kp.y);maxY=Math.max(maxY,kp.y);pts++; } }); } if(pts<indices.length) return { stableX: true, stableY: true, deltaX: 0, deltaY: 0 }; const dX=maxX-minX, dY=maxY-minY; return { stableX:dX<STABILITY_THRESHOLD_X, stableY:dY<STABILITY_THRESHOLD_Y, deltaX:dX, deltaY:dY }; }
+function getHeadStability() { return calculateStability([0]); } function getHandStability() { return calculateStability([9, 10]); } function getFeetStability() { return calculateStability([15, 16]); }
+
+// --- Keypoint Position Checks (Unchanged) ---
+function areHandsAboveNose(kps) { if(!kps||kps.length<11)return false; const n=kps[0],lW=kps[9],rW=kps[10],c=0.2; if(!n||n.score<c||!lW||lW.score<c||!rW||rW.score<c)return false; return lW.y<(n.y-HAND_NOSE_THRESHOLD_Y)||rW.y<(n.y-HAND_NOSE_THRESHOLD_Y); }
+function areHandsBelowNose(kps) { if(!kps||kps.length<11)return true; const n=kps[0],lW=kps[9],rW=kps[10],c=0.2; if(!n||n.score<c||!lW||lW.score<c||!rW||rW.score<c)return true; return lW.y>=n.y&&rW.y>=n.y; }
+function areHandsBelowElbows(kps) { if(!kps||kps.length<11)return false; const lW=kps[9],rW=kps[10],lE=kps[7],rE=kps[8],c=0.2; if(!lW||lW.score<c||!rW||rW.score<c||!lE||lE.score<c||!rE||rE.score<c)return false; return lW.y>(lE.y+5)||rW.y>(rE.y+5); }
+
+// --- Unified Reset Function (Clears anchors) ---
+function resetExercise(exerciseName, reason) {
+    const state = EXERCISE_STATES[exerciseName]; if (state) { if (ENABLE_DIAGNOSTIC_LOGGING && state.state !== 'Not Set') { console.log(`%c Resetting ${exerciseName} to 'Not Set'. Reason: ${reason}`, 'color: red; font-weight: bold;'); } state.state = 'Not Set'; state.status = null; state.sequence = []; state.frameCount = 0; state.cooldown = 0; state.lastRepFrame = null; state.lastActivityFrame = null; state.lastPotentialPose = null; state.consecutivePoseCount = 0; state.anchorHead = null; state.anchorHands = null; /* state.anchorFeet = null; */ } updateSingleExerciseUI(exerciseName);
+}
+
+// --- Helper resets others (Unchanged) ---
+function resetOthersOnSet(setToSetExercise) { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c Exercise ${setToSetExercise} reached 'Set'. Resetting others.`, 'color: blue;'); for (const exName in EXERCISE_STATES) { if (exName !== setToSetExercise) { resetExercise(exName, `${setToSetExercise} became Set`); } } }
+
+// --- Anchor-Based Stability Check Function (Axis-Specific) ---
+function checkStabilityAgainstAnchor(indices, anchorPositions, currentKeypoints, checkAxisX, checkAxisY) {
+    if (!anchorPositions || !currentKeypoints) { return true; } let isStable = true;
+    indices.forEach(idx => { const currentKp = currentKeypoints[idx]; let anchorKp = null; if (idx === 0 && anchorPositions.head) { anchorKp = anchorPositions.head; } else if (idx === 9 && anchorPositions.hands) { anchorKp = anchorPositions.hands.left; } else if (idx === 10 && anchorPositions.hands) { anchorKp = anchorPositions.hands.right; }
+        if (currentKp && currentKp.score > 0.2 && anchorKp) { const deltaX = Math.abs(currentKp.x - anchorKp.x); const deltaY = Math.abs(currentKp.y - anchorKp.y); let failedX = checkAxisX && (deltaX > STABILITY_THRESHOLD_X); let failedY = checkAxisY && (deltaY > STABILITY_THRESHOLD_Y); if (failedX || failedY) { isStable = false; let reason = (failedX ? `dX ${deltaX.toFixed(1)}>${STABILITY_THRESHOLD_X}` : '') + (failedX && failedY ? ' AND ' : '') + (failedY ? `dY ${deltaY.toFixed(1)}>${STABILITY_THRESHOLD_Y}` : ''); if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`Anchor Stability Fail: Idx ${idx}, ${reason}`); }
+        } else if (!anchorKp && currentKp && currentKp.score > 0.2) { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`Anchor Stability Check: No anchor found for Idx ${idx}, treating as stable.`); }
+    }); return isStable;
+}
+
+// --- Define Exercise Specific Logic (Axis-Specific Anchors) ---
+ const exerciseLogic = {
+    'curls': { entryCondition:(c)=>c.orientation==='Vertical'&&c.handsBelowNoseVal, entryReason:"V, hands low", exitCondition:(c, state)=>{ if (state.state === 'Set') { const headStableY = checkStabilityAgainstAnchor([0], { head: state.anchorHead }, c.keypoints, false, true); return c.handsAboveNoseVal || !headStableY || c.orientation!=='Vertical'; } else { return c.handsAboveNoseVal || c.orientation!=='Vertical'; } }, exitReason:(c, state)=>{ if (c.handsAboveNoseVal) return "Hands high"; if (state.state === 'Set') { const headStableY = checkStabilityAgainstAnchor([0], { head: state.anchorHead }, c.keypoints, false, true); if (!headStableY) return "Head moved out of Y anchor zone"; } if (c.orientation!=='Vertical') return "Not Vertical"; return "N/A"; }, sequencePoses:['d','u','d'], subsequentSequencePoses:['u','d'], mapPose:(p)=>{if(p==='curl_down'||p==='squat_up')return'd';if(p==='curl_up')return'u';return null;}, updateStatus:(s,mp)=>{if(s==='Pending'||s==='Set'){if(mp==='d')return'Down';if(mp==='u')return'Up';}return null;} },
+    'pushups': { entryCondition:(c)=>c.orientation==='Horizontal', entryReason:"Hori", exitCondition:(c, state) => { if (state.state === 'Set') { const handsStable = checkStabilityAgainstAnchor([9, 10], { hands: state.anchorHands }, c.keypoints, true, true); return !handsStable; } else { return false; } }, exitReason:(c, state) => { if (state.state === 'Set') { const handsStable = checkStabilityAgainstAnchor([9, 10], { hands: state.anchorHands }, c.keypoints, true, true); if (!handsStable) return "Hand moved out of anchor zone"; } return "N/A"; }, sequencePoses:['u','d','u'], subsequentSequencePoses:['d','u'], mapPose:(p)=>{if(p==='pushup_up')return'u';if(p==='pushup_down')return'd';return null;}, updateStatus:(s,mp)=>{if(s==='Pending'||s==='Set'){if(mp==='u')return'Up';if(mp==='d')return'Down';}return null;} },
+    'pullups': { entryCondition:(c)=>c.orientation==='Vertical'&&c.handsAboveNoseVal, entryReason:"V, hands high", exitCondition:(c, state)=>{ return c.handsBelowElbowsVal || c.orientation!=='Vertical'; }, exitReason:(c, state)=>{ if (c.handsBelowElbowsVal) return "Hands low"; if (c.orientation!=='Vertical') return "Not Vertical"; return "N/A"; }, sequencePoses:['d','u','d'], subsequentSequencePoses:['u','d'], mapPose:(p)=>{if(p==='pullup_down')return'd';if(p==='pullup_up')return'u';return null;}, updateStatus:(s,mp)=>{if(s==='Pending'||s==='Set'){if(mp==='d')return'Down';if(mp==='u')return'Up';}return null;} },
+    'squats': { entryCondition:(c)=>c.orientation==='Vertical'&&c.handsBelowNoseVal, entryReason:"V, hands low", exitCondition:(c, state)=>{ if (state.state === 'Set') { const headStableX = checkStabilityAgainstAnchor([0], { head: state.anchorHead }, c.keypoints, true, false); return !headStableX; } else { return false; } }, exitReason:(c, state)=>{ if (state.state === 'Set') { const headStableX = checkStabilityAgainstAnchor([0], { head: state.anchorHead }, c.keypoints, true, false); if (!headStableX) return "Head moved out of X anchor zone"; } return "N/A"; }, sequencePoses:['u','d','u'], subsequentSequencePoses:['d','u'], mapPose:(p)=>{if(p==='squat_up'||p==='curl_down')return'u';if(p==='squat_down')return'd';return null;}, updateStatus:(s,mp)=>{if(s==='Pending'||s==='Set'){if(mp==='u')return'Up';if(mp==='d')return'Down';}return null;} }
+ };
+
+// --- Rep Counting & Phase Update Logic (Passes state, captures anchors) ---
+function updateRepCountersAndPhase(currentPose, orientation, keypoints) {
+    frameCounter++; const headStability = getHeadStability(); const handStability = getHandStability(); const handsAboveNoseVal = areHandsAboveNose(keypoints); const handsBelowNoseVal = areHandsBelowNose(keypoints); const handsBelowElbowsVal = areHandsBelowElbows(keypoints);
+    const currentContext = { orientation, headStability, handStability, handsAboveNoseVal, handsBelowNoseVal, handsBelowElbowsVal, keypoints }; const SEQUENCE_TIMEOUT_FRAMES = PENDING_STATE_FRAME_WINDOW; let exerciseJustSet = null;
+    for (const exName in exerciseLogic) { const logic = exerciseLogic[exName]; const state = EXERCISE_STATES[exName]; if (!state) continue; const mappedPose = logic.mapPose(currentPose); if ((state.state === 'Pending' || state.state === 'Set') && mappedPose !== null) { state.lastActivityFrame = frameCounter; }
+        let poseConfirmed = false; if (mappedPose !== null) { if (mappedPose === state.lastPotentialPose) { state.consecutivePoseCount++; } else { state.lastPotentialPose = mappedPose; state.consecutivePoseCount = 1; } if (state.consecutivePoseCount >= POSE_CONFIRMATION_FRAMES) { poseConfirmed = true; } } else { state.lastPotentialPose = null; state.consecutivePoseCount = 0; } const confirmedMappedPose = poseConfirmed ? state.lastPotentialPose : null;
+        if (state.cooldown > 0) state.cooldown--;
+        if ((state.state === 'Pending' || state.state === 'Set') && logic.exitCondition(currentContext, state)) { resetExercise(exName, `Exit condition: ${logic.exitReason(currentContext, state)}`); continue; }
+        if (state.state === 'Not Set' && logic.entryCondition(currentContext)) { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c ${exName}: Entry -> Pending. Reason: ${logic.entryReason}`, 'color: green;'); state.state = 'Pending'; state.status = logic.updateStatus(state.state, confirmedMappedPose); state.sequence = []; state.frameCount = frameCounter; state.cooldown = 0; state.lastRepFrame = null; state.lastActivityFrame = frameCounter; state.lastPotentialPose = confirmedMappedPose; state.consecutivePoseCount = confirmedMappedPose ? 1 : 0; state.anchorHead = null; state.anchorHands = null; }
+        if (state.state === 'Pending' || state.state === 'Set') { if (state.sequence.length > 0 && (frameCounter - state.frameCount > SEQUENCE_TIMEOUT_FRAMES)) { resetExercise(exName, `Sequence timeout (> ${SEQUENCE_TIMEOUT_FRAMES} frames)from Pending state`); continue; }
+            if (confirmedMappedPose !== null) { if (state.sequence.length === 0 || state.sequence[state.sequence.length - 1].pose !== confirmedMappedPose) { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`${exName}: Confirmed pose ${confirmedMappedPose} added to sequence.`); state.sequence.push({ pose: confirmedMappedPose, frame: frameCounter }); if (state.sequence.length === 1) { state.frameCount = frameCounter; } } }
+            let requiredSequenceForRep = (state.state === 'Pending') ? logic.sequencePoses : logic.subsequentSequencePoses;
+            if (state.cooldown === 0 && state.sequence.length >= requiredSequenceForRep.length) { const recentSequence = state.sequence.slice(-requiredSequenceForRep.length); const recentPoses = recentSequence.map(s => s.pose); let sequenceMatch = recentPoses.every((pose, i) => pose === requiredSequenceForRep[i]);
+                 if (sequenceMatch) { const sequenceStartTimeFrame = recentSequence[0].frame; const sequenceEndTimeFrame = recentSequence[recentSequence.length - 1].frame; const sequenceDuration = sequenceEndTimeFrame - sequenceStartTimeFrame;
+                     if (sequenceDuration <= SEQUENCE_TIMEOUT_FRAMES && sequenceDuration >= 0) { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c*** ${exName}: Rep ${state.reps+1} Detected! ***`, 'color: green; font-weight: bold;'); state.reps++; state.lastRepFrame = frameCounter;
+                          if (state.state === 'Pending') { state.state = 'Set'; exerciseJustSet = exName; if (lastDetectedKeypoints) { if (exName === 'pushups' || exName === 'pullups' || exName === 'curls') { const lW = lastDetectedKeypoints[9], rW = lastDetectedKeypoints[10]; state.anchorHands = { left: (lW && lW.score > 0.2) ? { x: lW.x, y: lW.y } : null, right: (rW && rW.score > 0.2) ? { x: rW.x, y: rW.y } : null }; if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c${exName} Set: Captured Hand Anchors`, 'color: purple;', state.anchorHands); } if (exName === 'squats' || exName === 'curls') { const nose = lastDetectedKeypoints[0]; state.anchorHead = (nose && nose.score > 0.2) ? { x: nose.x, y: nose.y } : null; if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c${exName} Set: Captured Head Anchor`, 'color: purple;', state.anchorHead); } } else { if(ENABLE_DIAGNOSTIC_LOGGING) console.warn(`${exName} Set: Could not capture anchors, keypoints missing.`); state.anchorHands = null; state.anchorHead = null; } }
+                          state.cooldown = REP_COOLDOWN_FRAMES; state.status = logic.updateStatus(state.state, recentPoses[recentPoses.length - 1]); state.sequence = []; state.frameCount = frameCounter; state.lastActivityFrame = frameCounter; state.lastPotentialPose = null; state.consecutivePoseCount = 0;
+                     } else { if(ENABLE_DIAGNOSTIC_LOGGING) console.log(`%c ${exName}: Seq matched, but invalid duration (${sequenceDuration}f > ${SEQUENCE_TIMEOUT_FRAMES}f?). Discarding first pose of matched sequence.`, 'color: magenta;'); const mainSeqStartIndex = state.sequence.findIndex(s => s.frame === sequenceStartTimeFrame && s.pose === recentPoses[0]); if (mainSeqStartIndex !== -1) { state.sequence.splice(mainSeqStartIndex, 1); } else { state.sequence.shift(); } state.frameCount = state.sequence.length > 0 ? state.sequence[0].frame : frameCounter; state.lastPotentialPose = state.sequence.length > 0 ? state.sequence[state.sequence.length-1].pose : null; state.consecutivePoseCount = state.lastPotentialPose ? state.consecutivePoseCount : 0; }
+                 }
+            }
+        }
+        if (state.state === 'Pending' || state.state === 'Set') { const newStatus = logic.updateStatus(state.state, mappedPose); if (newStatus !== state.status) { state.status = newStatus; } } else if (state.state === 'Not Set') { if (state.status !== null) { state.status = null; } }
+    }
+    if (exerciseJustSet) { resetOthersOnSet(exerciseJustSet); }
+    updateAllExerciseUI(); updateStabilityUI();
+}
+
+// --- Helper function to update UI for a single exercise (Unchanged) ---
+function updateSingleExerciseUI(exerciseName) { try { const state = EXERCISE_STATES[exerciseName]; if (!state) return; const shortName = exerciseName.slice(0, -1); const rEl = document.getElementById(`${shortName}-reps`); const pEl = document.getElementById(`${shortName}-phase`); if (rEl) { const rTxt = String(state.reps); if (rEl.innerText !== rTxt) rEl.innerText = rTxt; } if (pEl) { let sTxt = state.status ? ` / ${state.status}` : ''; let cTxt = (state.cooldown > 0) ? ` (CD ${state.cooldown})` : ''; let iTxt = ''; let confTxt = ''; if (state.lastPotentialPose && state.consecutivePoseCount > 0 && state.consecutivePoseCount < POSE_CONFIRMATION_FRAMES) { confTxt = ` (${state.lastPotentialPose}:${state.consecutivePoseCount})`; } let nTxt = `(${state.state}${sTxt}${cTxt}${iTxt}${confTxt})`; if (pEl.innerText !== nTxt) pEl.innerText = nTxt; } } catch (e) { console.error(`UI Error updating ${exerciseName}:`, e); } }
+
+// --- Helper function to update UI for all exercises (Unchanged) ---
+function updateAllExerciseUI() { for (const exName in EXERCISE_STATES) { updateSingleExerciseUI(exName); } }
+
+// --- Helper function to update stability UI (Displays HISTORY-based stability) ---
+function updateStabilityUI() { try { const headStability = getHeadStability(); const handStability = getHandStability(); const feetStability = getFeetStability(); const hE = document.getElementById('head-stability-value'); const hnE = document.getElementById('hand-stability-value'); const fE = document.getElementById('feet-stability-value'); if (hE) hE.innerText = `History Δ: Y:${headStability.stableY ? 'S' : 'NS'}(${headStability.deltaY.toFixed(1)})/X:${headStability.stableX ? 'S' : 'NS'}(${headStability.deltaX.toFixed(1)})`; if (hnE) hnE.innerText = `History Δ: X:${handStability.stableX ? 'S' : 'NS'}(${handStability.deltaX.toFixed(1)}) Y:${handStability.stableY ? 'S' : 'NS'}(${handStability.deltaY.toFixed(1)})`; if (fE) fE.innerText = `History Δ: X:${feetStability.stableX ? 'S' : 'NS'}(${feetStability.deltaX.toFixed(1)}) Y:${feetStability.stableY ? 'S' : 'NS'}(${feetStability.deltaY.toFixed(1)})`; } catch (e) { console.error(`UI Stability Error:`, e); } }
+
+// --- Process Pose Detection (Stores last keypoints) ---
+async function processPoseDetection(poses) {
+    let modelEstimate = "No pose detected", confidence = 0, orientation = "Unknown", finalPose = "Neutral", displayConfidenceStr = "-"; let currentKeypoints = null; lastDetectedKeypoints = null; let frameTimestamp = Date.now();
+    try {
+        if (poses && poses.length > 0 && poses[0].keypoints) { currentKeypoints = poses[0].keypoints; lastDetectedKeypoints = currentKeypoints; keypointHistory.push(currentKeypoints); if (keypointHistory.length > KEYPOINT_HISTORY_LENGTH) keypointHistory.shift(); orientation = getPoseOrientation(currentKeypoints); const angles = computeCommonAngles(currentKeypoints); const { tensor: inputTensor } = extractFeaturesFromFrame({ keypoints: currentKeypoints, angles: angles }, orientation);
+            if (inputTensor && poseModel) { let predictionTensor = null; try { predictionTensor = poseModel.predict(inputTensor); const { values, indices } = tf.tidy(() => ({ values: tf.max(predictionTensor, -1).clone(), indices: tf.argMax(predictionTensor, -1).clone() })); const [maxProbData, labelIdxData] = await Promise.all([values.data(), indices.data()]); confidence = maxProbData[0]; const labelIndex = labelIdxData[0]; modelEstimate = labelMap?.[labelIndex] ?? `Error: Idx ${labelIndex}?`; displayConfidenceStr = (confidence * 100).toFixed(1) + "%"; values.dispose(); indices.dispose(); } catch (predictError) { console.error("Prediction Error:", predictError); modelEstimate = "Prediction Error"; displayConfidenceStr = "-"; } finally { if(inputTensor) inputTensor.dispose(); if (predictionTensor) predictionTensor.dispose(); }
+            } else { if (!inputTensor) console.warn("Input tensor null."); if (!poseModel) console.warn("Pose model not loaded."); if(inputTensor) inputTensor.dispose(); modelEstimate = "Feature Error"; displayConfidenceStr = "-"; }
+            finalPose = (confidence * 100 < CONFIDENCE_THRESHOLD_PERCENT) ? "Neutral" : modelEstimate; if (finalPose.startsWith('pushup_') && orientation !== 'Horizontal') finalPose = "Invalid State (Pushup/Orientation)"; else if (finalPose.startsWith('pullup_') && orientation !== 'Vertical') finalPose = "Invalid State (Pullup/Orientation)"; else if (finalPose.startsWith('curl_') && orientation !== 'Vertical') finalPose = "Invalid State (Curl/Orientation)"; else if (finalPose.startsWith('squat_') && orientation !== 'Vertical') finalPose = "Invalid State (Squat/Orientation)";
+        } else { finalPose = "Neutral"; modelEstimate = "No pose detected"; displayConfidenceStr = "-"; orientation = "Unknown"; keypointHistory.push(null); if (keypointHistory.length > KEYPOINT_HISTORY_LENGTH) keypointHistory.shift(); currentKeypoints = null; lastDetectedKeypoints = null; }
+        poseHistory.push(finalPose); if (poseHistory.length > POSE_HISTORY_LENGTH) poseHistory.shift();
+        try { document.getElementById("pose-estimate").innerText = modelEstimate; document.getElementById("pose-confidence").innerText = displayConfidenceStr; document.getElementById("orientation-value").innerText = orientation; document.getElementById("final-pose").innerText = finalPose; } catch(uiError) { console.error("Primary UI Update Error:", uiError); }
+        try { updateRepCountersAndPhase(finalPose, orientation, currentKeypoints); } catch (repError) { console.error("Rep Counter/Phase Update Error:", repError); }
+        if (ENABLE_DIAGNOSTIC_LOGGING) { try { let logStates = {}; for(const ex in EXERCISE_STATES){ logStates[ex] = structuredClone(EXERCISE_STATES[ex]); if(logStates[ex].sequence) logStates[ex].sequence = logStates[ex].sequence.map(s=>s.pose); } poseSequenceLog.push({ timestamp: frameTimestamp, frame: frameCounter, modelEstimate, confidence: displayConfidenceStr, orientation, finalPose, states: logStates }); if (downloadLogBtn) downloadLogBtn.disabled = false; } catch (logError) { console.error("Log Error:", logError); poseSequenceLog.push({ timestamp: frameTimestamp, frame: frameCounter, error: "Log fail" }); } }
+    } catch (processError) { console.error("Overall Processing Error:", processError); try { document.getElementById("final-pose").innerText = "Proc. Error"; } catch(e){} }
+}
+
+// --- Drawing Function (Includes Skeleton, Keypoints, and Axis-Specific Anchors) ---
+function drawKeypointsScaled(kpArray, ctx, videoWidth, videoHeight) {
+    if (!ctx || !overlayCanvas || !videoWidth || !videoHeight || videoWidth <= 0 || videoHeight <= 0) return;
+    const canvasWidth = overlayCanvas.width, canvasHeight = overlayCanvas.height;
+    const ratioX = canvasWidth / videoWidth, ratioY = canvasHeight / videoHeight;
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight); // Clear canvas
+
+    // --- Draw Skeleton and Keypoints (Re-incorporated/Verified) ---
+    if (kpArray) {
+        // Skeleton Lines
+        ctx.strokeStyle = "aqua"; ctx.lineWidth = 2;
+        const connections = [ [0, 1], [0, 2], [1, 3], [2, 4], [5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16] ];
+        connections.forEach(([startIdx, endIdx]) => { const startKp = kpArray[startIdx], endKp = kpArray[endIdx]; if (startKp && endKp && startKp.score > 0.2 && endKp.score > 0.2) { ctx.beginPath(); ctx.moveTo(startKp.x * ratioX, startKp.y * ratioY); ctx.lineTo(endKp.x * ratioX, endKp.y * ratioY); ctx.stroke(); } });
+        // Keypoint Dots
+        ctx.fillStyle = "lime";
+        kpArray.forEach(kp => { if (kp && typeof kp.score === 'number' && kp.score > 0.3) { const dx = kp.x * ratioX, dy = kp.y * ratioY; ctx.beginPath(); ctx.arc(dx, dy, 4, 0, 2 * Math.PI); ctx.fill(); } });
+    }
+    // --- END Skeleton and Keypoints ---
+
+    // --- Draw FIXED Stability Anchors (Lines or Boxes) ---
+    ctx.strokeStyle = "red"; ctx.lineWidth = 2;
+    for (const exName in EXERCISE_STATES) { const state = EXERCISE_STATES[exName];
+        if (state.state === 'Set') {
+            let checkAxisX = false; let checkAxisY = false; let relevantAnchor = null; let indicesToCheck = [];
+            if (exName === 'squats' && state.anchorHead) { checkAxisX = true; checkAxisY = false; relevantAnchor = state.anchorHead; indicesToCheck = [0]; }
+            else if (exName === 'curls' && state.anchorHead) { checkAxisX = false; checkAxisY = true; relevantAnchor = state.anchorHead; indicesToCheck = [0]; }
+            else if (exName === 'pushups' && state.anchorHands) { checkAxisX = true; checkAxisY = true; relevantAnchor = state.anchorHands; indicesToCheck = [9, 10]; }
+            if (relevantAnchor) {
+                 indicesToCheck.forEach(idx => { let anchorKp = null; if (indicesToCheck.length === 1) { anchorKp = relevantAnchor; } else if (idx === 9 && relevantAnchor.left) { anchorKp = relevantAnchor.left; } else if (idx === 10 && relevantAnchor.right) { anchorKp = relevantAnchor.right; }
+                      if (anchorKp) { const anchorX = anchorKp.x * ratioX; const anchorY = anchorKp.y * ratioY; const thresholdWidth = STABILITY_THRESHOLD_X * ratioX; const thresholdHeight = STABILITY_THRESHOLD_Y * ratioY; ctx.beginPath(); if (checkAxisX && checkAxisY) { ctx.rect(anchorX - thresholdWidth / 2, anchorY - thresholdHeight / 2, thresholdWidth, thresholdHeight); } else if (checkAxisX) { ctx.moveTo(anchorX - thresholdWidth / 2, anchorY); ctx.lineTo(anchorX + thresholdWidth / 2, anchorY); } else if (checkAxisY) { ctx.moveTo(anchorX, anchorY - thresholdHeight / 2); ctx.lineTo(anchorX, anchorY + thresholdHeight / 2); } ctx.stroke(); }
+                 });
+            }
+        }
+    }
+    // --- END ANCHOR DRAWING ---
+    if (!kpArray) { ctx.clearRect(0, 0, canvasWidth, canvasHeight); }
+}
+
+
+// --- Detection Loops (Pass keypoints to drawing function) ---
+function startWebcamDetectionLoop() { if (rafId) return; console.log(`Webcam loop ~${(1000 / FRAME_PROCESSING_INTERVAL_MS).toFixed(1)} FPS`); const detect = async () => { if (!isInputRunning || isProcessingVideoFile || !detector || !poseModel || !displayVideo || displayVideo.paused || displayVideo.ended) { if (rafId) clearTimeout(rafId); rafId = null; console.log("Webcam loop stopped."); return; } let poses = null; try { poses = await detector.estimatePoses(displayVideo, { flipHorizontal: false }); } catch (err) { console.error("Webcam estimation error:", err); rafId = setTimeout(detect, FRAME_PROCESSING_INTERVAL_MS); return; } drawKeypointsScaled(poses?.[0]?.keypoints, overlayCtx, displayVideo.videoWidth, displayVideo.videoHeight); try { await processPoseDetection(poses); } catch (e) { console.error("Webcam processPose error:", e); } if (isInputRunning && !isProcessingVideoFile) rafId = setTimeout(detect, FRAME_PROCESSING_INTERVAL_MS); else { if (rafId) clearTimeout(rafId); rafId = null; } }; if (isInputRunning && !isProcessingVideoFile) rafId = setTimeout(detect, 0); }
+function startVideoFileProcessingLoop() { if (videoProcessingHandle) return; console.log(`Video loop ~${(1000 / FRAME_PROCESSING_INTERVAL_MS).toFixed(1)} FPS`); const processFrame = async () => { if (!isInputRunning || !isProcessingVideoFile || !detector || !poseModel || !displayVideo || displayVideo.paused || displayVideo.ended) { if (videoProcessingHandle) clearTimeout(videoProcessingHandle); videoProcessingHandle = null; if(displayVideo?.ended) { console.log("Video finished."); if(inputStatusElement) inputStatusElement.textContent = "Video finished."; stopInput(); } else { console.log("Video loop stopped."); } return; } let poses = null; try { if (displayVideo.readyState >= 2) { poses = await detector.estimatePoses(displayVideo, { flipHorizontal: false }); } else { console.warn("Video frame not ready for estimation."); } } catch (err) { console.error("Video estimation error:", err); } drawKeypointsScaled(poses?.[0]?.keypoints, overlayCtx, displayVideo.videoWidth, displayVideo.videoHeight); try { await processPoseDetection(poses); } catch (e) { console.error("Video processPose error:", e); } if (isInputRunning && isProcessingVideoFile) videoProcessingHandle = setTimeout(processFrame, FRAME_PROCESSING_INTERVAL_MS); else { if (videoProcessingHandle) clearTimeout(videoProcessingHandle); videoProcessingHandle = null; } }; if (isInputRunning && isProcessingVideoFile) videoProcessingHandle = setTimeout(processFrame, 0); }
+
+
+// --- Reset Exercise States (Unchanged) ---
+function resetExerciseStates() { console.log("Resetting exercise states (Not Rep Counts)"); for (const exName in EXERCISE_STATES) { if (EXERCISE_STATES.hasOwnProperty(exName)) { resetExercise(exName, "Manual Reset or New Input"); } } frameCounter = 0; poseHistory = []; keypointHistory = []; poseSequenceLog = []; lastDetectedKeypoints = null; try { updateStabilityUI(); document.getElementById('pose-estimate').innerText = '-'; document.getElementById('pose-confidence').innerText = '-'; document.getElementById('orientation-value').innerText = '-'; document.getElementById('final-pose').innerText = 'Neutral'; if(downloadLogBtn) downloadLogBtn.disabled = true; } catch (e) { console.error("UI Reset Error:", e); } updateAllExerciseUI(); }
+
+// --- Input Control Functions (Unchanged) ---
+async function startWebcam() { console.log("Starting webcam..."); if (isInputRunning) { console.log("Already running."); return; } if (!detector || !poseModel) { if(inputStatusElement) inputStatusElement.textContent = "Resources not ready."; return; } if(displayVideo) { displayVideo.srcObject = null; displayVideo.src = ''; displayVideo.removeAttribute('src'); } else { console.error("Video element missing!"); return; } if(inputStatusElement) inputStatusElement.textContent = "Requesting camera..."; setUIButtonState(true, false); try { activeInputStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); if(inputStatusElement) inputStatusElement.textContent = "Camera accessed..."; displayVideo.srcObject = activeInputStream; displayVideo.muted = true; displayVideo.controls = false; await new Promise((resolve, reject) => { let resolved=false, timeout=7000, timer=setTimeout(()=>{if(!resolved)reject(new Error("Timeout waiting for video play"))},timeout); displayVideo.onloadedmetadata=()=>{console.log("Webcam meta loaded.");resizeOverlayCanvas()}; displayVideo.onplaying=()=>{console.log("Webcam playing.");if(!resolved){resolved=true;clearTimeout(timer);resolve()}}; displayVideo.onerror=(e)=>{if(!resolved){clearTimeout(timer);console.error("Video playback error:",e);reject(new Error("Video error during setup"))}}; displayVideo.play().catch(err=>{console.error("video.play() rejected:",err);if(activeInputStream)activeInputStream.getTracks().forEach(t=>t.stop());activeInputStream=null;if(!resolved){clearTimeout(timer);reject(err)}}) }); console.log("Webcam ready. Starting loop."); isInputRunning = true; isProcessingVideoFile = false; if(displaySection) displaySection.style.display = 'block'; resetExerciseStates(); startWebcamDetectionLoop(); setUIButtonState(true, true); if(inputStatusElement) inputStatusElement.textContent = "Webcam active"; console.log("Webcam started."); } catch (err) { console.error("Webcam start failed:", err); handleMediaError(err); stopInput(); } }
+function stopInput() { console.log("Stopping input."); isInputRunning = false; isProcessingVideoFile = false; if (rafId) { clearTimeout(rafId); rafId = null; } if (videoProcessingHandle) { clearTimeout(videoProcessingHandle); videoProcessingHandle = null; } if (activeInputStream) { activeInputStream.getTracks().forEach(t => t.stop()); activeInputStream = null; } if(displayVideo){ displayVideo.pause(); displayVideo.srcObject = null; if (displayVideo.src?.startsWith('blob:')) URL.revokeObjectURL(displayVideo.src); displayVideo.removeAttribute('src'); try { displayVideo.load(); } catch (e) { console.warn("Video load() error during stop:", e); } } if (overlayCtx) overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); setUIButtonState(false, false); if(inputStatusElement) inputStatusElement.textContent = "Input stopped."; if(videoUploadInput) videoUploadInput.value = ''; }
+function handleVideoUpload(event) { const file = event?.target?.files?.[0]; if (!file) return; console.log("Video selected:", file.name); if (isInputRunning) stopInput(); let fileURL = null; try { fileURL = URL.createObjectURL(file); } catch (e) { console.error("URL createObjectURL error:", e); if(inputStatusElement) inputStatusElement.textContent = "Video load error."; return; } if(!displayVideo) { console.error("Video element missing!"); return; } displayVideo.srcObject = null; displayVideo.src = fileURL; displayVideo.muted = false; displayVideo.controls = true; if(inputStatusElement) inputStatusElement.textContent = "Video selected. Press Play."; if(displaySection) displaySection.style.display = 'block'; setUIButtonState(false, true); displayVideo.onloadedmetadata = () => { console.log("Video meta loaded."); resizeOverlayCanvas(); resetExerciseStates(); }; displayVideo.onplay = () => { console.log("Video playing."); if(inputStatusElement) inputStatusElement.textContent = "Processing video..."; isInputRunning = true; isProcessingVideoFile = true; setUIButtonState(true, true); startVideoFileProcessingLoop(); }; displayVideo.onpause = () => { if(isInputRunning){ console.log("Video paused."); if(inputStatusElement) inputStatusElement.textContent = "Video paused."; } }; displayVideo.onended = () => { console.log("Video ended."); if(inputStatusElement) inputStatusElement.textContent = "Video finished."; stopInput(); }; displayVideo.onerror = (e) => { console.error("Video file error:", e); if(inputStatusElement) inputStatusElement.textContent = "Video file error."; stopInput(); if (fileURL) URL.revokeObjectURL(fileURL); }; }
+
+// --- Utility Functions (Unchanged) ---
+function resizeOverlayCanvas() { const container = document.getElementById('media-container'); if (!displayVideo || !overlayCanvas || !container) return; const vw = displayVideo.videoWidth, vh = displayVideo.videoHeight; if (vw && vh && vw > 0 && vh > 0) { const displayWidth = container.clientWidth; const aspectRatio = vw / vh; const displayHeight = displayWidth / aspectRatio; overlayCanvas.width = vw; overlayCanvas.height = vh; overlayCanvas.style.width = `${displayWidth}px`; overlayCanvas.style.height = `${displayHeight}px`; displayVideo.style.height = `${displayHeight}px`; displayVideo.style.width = `100%`; } }
+function setUIButtonState(isRunning, inputActive) { if(startWebcamBtn) startWebcamBtn.disabled = inputActive; if(stopInputBtn) stopInputBtn.disabled = !isRunning; if(videoUploadInput) videoUploadInput.disabled = isRunning && !isProcessingVideoFile; }
+function handleMediaError(err) { let msg = `Error: ${err.name||'Unknown'}. Console for details.`; if (err.name==="NotAllowedError"||err.name==="PermissionDeniedError") msg="Error: Camera access denied."; else if (err.name==="NotFoundError"||err.name==="DevicesNotFoundError") msg="Error: No camera found."; else if (err.name==="NotReadableError"||err.name==="TrackStartError") msg="Error: Camera in use/hardware error."; else if (err.name==="OverconstrainedError") msg="Error: Camera constraints failed."; else if (err.name==="AbortError") msg="Error: Camera access aborted."; if(inputStatusElement) inputStatusElement.textContent = msg; console.error("Media Error:", err); }
+function clearPoseSequenceLog() { poseSequenceLog = []; if(downloadLogBtn) downloadLogBtn.disabled = true; console.log("Log cleared."); }
+function downloadPoseLog() { if(poseSequenceLog.length === 0) return alert("No log data."); try { const jsonString = JSON.stringify(poseSequenceLog, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `pose_log_${new Date().toISOString().replace(/[:.]/g, '-')}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); console.log("Log downloaded."); } catch (e) { console.error("Log download error:", e); alert("Log download failed."); } }
+
+// --- Initialization (Unchanged) ---
+window.addEventListener('DOMContentLoaded', async () => {
+    console.log("DOM loaded.");
+    displayVideo = document.getElementById('display-video'); overlayCanvas = document.getElementById('overlay'); videoUploadInput = document.getElementById('video-upload'); startWebcamBtn = document.getElementById('start-webcam-btn'); stopInputBtn = document.getElementById('stop-input-btn'); resetStateBtn = document.getElementById('reset-state-btn'); downloadLogBtn = document.getElementById('download-log-btn'); displaySection = document.getElementById('display-section'); inputStatusElement = document.getElementById("input-status"); const pbT=document.getElementById('pullup-bar-toggle'), bT=document.getElementById('barbell-toggle'), dT=document.getElementById('dumbbells-toggle');
+    if (!displayVideo || !overlayCanvas || !videoUploadInput || !stopInputBtn || !resetStateBtn || !downloadLogBtn || !displaySection || !startWebcamBtn || !inputStatusElement) { console.error("Essential UI elements missing!"); if(inputStatusElement) inputStatusElement.textContent = "Init Error: UI missing."; return; }
+    if (overlayCanvas) overlayCtx = overlayCanvas.getContext('2d');
+    await loadAppResources();
+    startWebcamBtn.addEventListener('click', startWebcam); stopInputBtn.addEventListener('click', stopInput); resetStateBtn.addEventListener('click', resetExerciseStates); videoUploadInput.addEventListener('change', handleVideoUpload); downloadLogBtn.addEventListener('click', downloadPoseLog); displayVideo.addEventListener('loadedmetadata', resizeOverlayCanvas); window.addEventListener('resize', resizeOverlayCanvas);
+    if (pbT) pbT.addEventListener('change', (e) => { isPullupBarDetected = e.target.checked; console.log(`Pullup Bar: ${isPullupBarDetected}`); }); if (bT) bT.addEventListener('change', (e) => { isBarbellDetected = e.target.checked; console.log(`Barbell: ${isBarbellDetected}`); }); if (dT) dT.addEventListener('change', (e) => { isDumbbellsDetected = e.target.checked; console.log(`Dumbbells: ${isDumbbellsDetected}`); });
+    const confSl = document.getElementById('confidence-slider'), confVal = document.getElementById('confidence-value'), stabYSl = document.getElementById('stability-y-slider'), stabYVal = document.getElementById('stability-y-value'), stabXSl = document.getElementById('stability-x-slider'), stabXVal = document.getElementById('stability-x-value'); const intSl = document.getElementById('interval-slider'), intVal = document.getElementById('interval-value'), pendSl = document.getElementById('pending-window-slider'), pendVal = document.getElementById('pending-window-value'), coolSl = document.getElementById('cooldown-slider'), coolVal = document.getElementById('cooldown-value');
+    function updateIntDisp(v) { if(intVal) intVal.textContent = `${v}ms (~${(1000 / v).toFixed(1)} FPS)`; }
+    if (confSl) { confSl.value = CONFIDENCE_THRESHOLD_PERCENT; if(confVal) confVal.textContent = `${CONFIDENCE_THRESHOLD_PERCENT}%`; confSl.addEventListener('input', (e) => { CONFIDENCE_THRESHOLD_PERCENT = parseInt(e.target.value, 10); if(confVal) confVal.textContent = `${CONFIDENCE_THRESHOLD_PERCENT}%`; console.log(`Conf Thresh: ${CONFIDENCE_THRESHOLD_PERCENT}%`); }); }
+    if (stabYSl) { stabYSl.value = STABILITY_THRESHOLD_Y; if(stabYVal) stabYVal.textContent = STABILITY_THRESHOLD_Y; stabYSl.addEventListener('input', (e) => { STABILITY_THRESHOLD_Y = parseInt(e.target.value, 10); if(stabYVal) stabYVal.textContent = STABILITY_THRESHOLD_Y; console.log(`Stab Y: ${STABILITY_THRESHOLD_Y}`); }); }
+    if (stabXSl) { stabXSl.value = STABILITY_THRESHOLD_X; if(stabXVal) stabXVal.textContent = STABILITY_THRESHOLD_X; stabXSl.addEventListener('input', (e) => { STABILITY_THRESHOLD_X = parseInt(e.target.value, 10); if(stabXVal) stabXVal.textContent = STABILITY_THRESHOLD_X; console.log(`Stab X: ${STABILITY_THRESHOLD_X}`); }); }
+    if (intSl) { intSl.value = FRAME_PROCESSING_INTERVAL_MS; updateIntDisp(FRAME_PROCESSING_INTERVAL_MS); intSl.addEventListener('input', (e) => { FRAME_PROCESSING_INTERVAL_MS = parseInt(e.target.value, 10); updateIntDisp(FRAME_PROCESSING_INTERVAL_MS); console.log(`Interval: ${FRAME_PROCESSING_INTERVAL_MS}ms`); }); }
+    if (pendSl) { pendSl.value = PENDING_STATE_FRAME_WINDOW; if(pendVal) pendVal.textContent = PENDING_STATE_FRAME_WINDOW; pendSl.addEventListener('input', (e) => { PENDING_STATE_FRAME_WINDOW = parseInt(e.target.value, 10); if(pendVal) pendVal.textContent = PENDING_STATE_FRAME_WINDOW; console.log(`Seq Window: ${PENDING_STATE_FRAME_WINDOW}f`); }); }
+    if (coolSl) { coolSl.value = REP_COOLDOWN_FRAMES; if(coolVal) coolVal.textContent = REP_COOLDOWN_FRAMES; coolSl.addEventListener('input', (e) => { REP_COOLDOWN_FRAMES = parseInt(e.target.value, 10); if(coolVal) coolVal.textContent = REP_COOLDOWN_FRAMES; console.log(`Cooldown: ${REP_COOLDOWN_FRAMES}f`); }); }
+    setUIButtonState(false, false); resetExerciseStates(); console.log("Initialization complete.");
+});
+</script>
+
+</body>
+</html>

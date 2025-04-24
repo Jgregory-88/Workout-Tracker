@@ -1,0 +1,10 @@
+{
+  "0": "curl_down",
+  "1": "curl_up",
+  "2": "pullup_down",
+  "3": "pullup_up",
+  "4": "pushup_down",
+  "5": "pushup_up",
+  "6": "squat_down",
+  "7": "squat_up"
+}
